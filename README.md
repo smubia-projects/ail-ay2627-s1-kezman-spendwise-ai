@@ -1,6 +1,6 @@
 # SpendWise AI
 
-SpendWise AI is a responsive expense tracker for recording personal spending, reviewing deterministic monthly statistics, and suggesting categories with AI assistance. It was prepared for the AI Lodge Hackathon.
+SpendWise AI is a responsive expense tracker for recording personal spending, reviewing deterministic monthly statistics, suggesting categories with AI assistance, and getting coach-style AI commentary on a month's spending. It was built by Kezman Tang for the AI Lodge Hackathon. This fork is the AI Lodge showcase version (see [What is deployed](#what-is-deployed)).
 
 ## Problem Statement
 
@@ -8,66 +8,62 @@ Recording expenses is only useful when it is quick and the resulting spending da
 
 ## Solution Overview
 
-SpendWise AI combines authenticated expense management with a dashboard of totals, category breakdowns, charts, search, and filtering. Supabase stores each user's expenses. The app calculates all financial statistics from those saved records; AI is used only for qualitative category assistance and, when available, optional spending commentary.
+SpendWise AI combines expense management with a dashboard of totals, category breakdowns, charts, search, and filtering. The app calculates all financial statistics from the recorded transactions; AI is used only for qualitative help: suggesting a category for a new expense, and interpreting one month's verified summary as patterns, savings ideas and recommendations.
 
 ## Key Features
 
-- Supabase email/password authentication, protected application routes, and password recovery.
-- Create, view, edit, delete, search, and filter expenses stored in Supabase.
-- Owner-scoped expense queries and PostgreSQL row-level security.
-- Dashboard totals, category summaries, and monthly charts calculated from saved transactions.
-- AI-assisted expense categorisation with a clearly labelled deterministic fallback and manual category override.
+- Create, view, edit, delete, search, and filter expenses.
+- Dashboard totals, category summaries, and monthly charts calculated from the recorded transactions.
+- AI-assisted expense categorisation with a clearly labelled keyword fallback and manual category override.
+- AI Spending Insights for a chosen month: overview, key patterns, potential savings and recommendations.
 - Responsive interface for desktop and mobile.
-- Local-only fictional demo-data generator; it writes JSON and never connects to Supabase.
 
-AI Spending Insights is implemented but currently paused in the interface. Previous live requests through apiyi failed with HTTP 429 and a client timeout; a timeout adjustment has not yet been confirmed with a successful response. The app therefore does not show or claim generated insight recommendations. Its monthly expense totals remain available.
+## What is deployed
+
+The showcase is a public demo with no accounts:
+
+- **Frontend (Vercel):** the Next.js app (`app/`, `components/`, `lib/`). Expenses are kept in the visitor's browser (`localStorage`, see `lib/expense-store.ts`); a first visit is seeded with nine fictional transactions for September and October 2026, and **Reset demo data** restores them. Nothing is stored on a server.
+- **API (Cloud Run):** a small Express service in `server/`, bundled with esbuild, that runs the two AI steps:
+  - `GET /api/health` → `{"status":"ok"}`
+  - `POST /api/ai/categorize` `{ description }` → `{ category, explanation, source }`
+  - `POST /api/ai/insights` `{ month, expenses: [{ amountCents, category }] }` → insights plus the verified summary. Only amounts and categories are sent; descriptions and notes stay in the browser.
+- **Rate limit:** both AI routes go through the AI Lodge shared rate-limit engine (`server/rateLimitEngine.js`, buckets `categorize` and `insights`). Over the limit the API returns 429 and the app shows the AI Lodge card; a paused demo returns 503 and shows a notice. The rest of the app keeps working, and nothing replaces the AI answer after a 429.
+- **Category suggestions are on request:** the visitor clicks **Suggest category** (the original asked the model while typing).
+
+Left out of the showcase, but kept in this fork: the Supabase email/password accounts, password recovery and the expenses table (`supabase/migrations/`), and `scripts/create-local-demo-data.mjs`.
 
 ## AI Integration
 
-Categorisation calls an OpenAI-compatible chat completion endpoint from a server route. SpendWise AI was configured for the AI Lodge Hackathon's **apiyi** provider, which is selected with `OPENAI_BASE_URL`; `OPENAI_MODEL` supplies the model identifier. A live categorisation request through apiyi previously succeeded. Provider availability depends on valid server-side credentials, model access, and account limits.
+Both AI steps call an OpenAI-compatible chat completions endpoint from the API, configured by env: `API_BASE_URL` (default `https://api.apiyi.com/v1`), `API_KEY` and `MODEL_NAME` (default `gemini-3.5-flash-lite`). The original `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL` names are still read as fallbacks.
 
-Categorisation output is validated against the app's approved categories. If the provider is unavailable, the app can return a clearly labelled rule-based fallback; that fallback is not represented as AI output. AI Spending Insights remains unverified and is disabled in the interface until a real provider response can be validated.
+- **Categorisation** output is validated against the approved categories. If the provider fails or answers badly, the app returns a keyword match labelled "not AI"; it is never shown as AI output.
+- **Insights** never compute figures: the API sums the month in code (`lib/insights.ts`), the model only interprets that summary, and its text is rejected if it states an amount, currency, percentage, decimal or date (`lib/ai.ts`). A rejected answer gets one corrective retry; if that also fails the API answers 502 and nothing is shown.
 
 ## External Tools & Datasets
 
-- **AI Lodge apiyi** provides the OpenAI-compatible AI API used for categorisation.
-- **OpenAI Node SDK** sends requests from server-side Next.js routes.
-- **Supabase** provides authentication and PostgreSQL storage with row-level security.
-- **Next.js, React, and TypeScript** power the web application.
-- No external financial dataset is used. Analysis is based only on the authenticated user's saved expense records. The optional demo-data script generates fictional local JSON data.
+- **AI Lodge apiyi** (OpenAI-compatible gateway) for categorisation and insights.
+- **OpenAI Node SDK**, **Express**, **Next.js, React, TypeScript**, **Recharts**, **Zod**.
+- No external financial dataset is used. The demo data is fictional.
 
 ## Installation & Setup
 
-Requirements: Node.js and an existing Supabase project.
+Requirements: Node.js 22+.
 
-1. Install dependencies: `npm install`.
-2. Copy `.env.example` to `.env.local` and configure:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-   - `NEXT_PUBLIC_SITE_URL` (locally, `http://localhost:3000`)
-   - `AUTH_RECOVERY_SECRET` (generate a private value with `openssl rand -hex 32`)
-   - `OPENAI_API_KEY`
-   - `OPENAI_BASE_URL` (for apiyi, `https://api.apiyi.com/v1`)
-   - `OPENAI_MODEL` (a model enabled for your apiyi account)
-3. Keep `.env.local` private; the API key and recovery secret must not use a `NEXT_PUBLIC_` prefix.
-4. In the Supabase SQL Editor, apply [`supabase/migrations/20261012000000_spendwise_expenses.sql`](./supabase/migrations/20261012000000_spendwise_expenses.sql).
-5. In Supabase **Authentication → URL Configuration**, set the Site URL to `http://localhost:3000` and add `http://localhost:3000/auth/callback` to Redirect URLs. For production, add the exact HTTPS callback URL for the deployed app and set `NEXT_PUBLIC_SITE_URL` accordingly.
-6. Keep email confirmation enabled. Configure a verified custom SMTP sender for reliable delivery; the Supabase default email service is restricted and rate-limited.
-7. For custom Supabase email templates, use the callback redirect URL and token hash. Recovery link: `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery`; signup confirmation link: `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email`. The callback also supports PKCE authorization-code links.
-8. Start the app with `npm run dev`.
+1. `npm install`
+2. API: copy `.env.example` to `.env` and set `API_KEY` (leave it empty to run without AI). Start it with `npm run dev:server` (port 8080).
+3. Frontend: copy `.env.local.example` to `.env.local` (`NEXT_PUBLIC_API_BASE=http://localhost:8080`) and run `npm run dev` (port 3000).
 
-To check a signup or recovery email, inspect **Authentication → Users** and **Authentication → Logs** in Supabase, then check the configured email provider's delivery/bounce logs. An accepted signup request does not prove the email reached the inbox.
+Checks: `npm test` (unit tests, including the insights flow against a stubbed model), `npm run lint`, `npm run build`, `npm run build:server`.
 
-Optional local-only fictional data: `node scripts/create-local-demo-data.mjs` writes September and October examples to the ignored `.local-demo-data/expenses.json`. It does not import or insert anything into Supabase.
+## Deployment
 
-Run checks with `npm test`, `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+- **API:** `.github/workflows/deploy.yml` builds the `Dockerfile` (context: repo root), pushes it to Docker Hub and deploys the Cloud Run service `ail-ay2627-s1-kezman-spendwise-ai` with env from the `DOTENV` repo secret (`gh secret set DOTENV < .env`).
+- **Frontend:** a Vercel project on the repo root (Next.js preset) with `NEXT_PUBLIC_API_BASE` set to the Cloud Run URL. Then put the Vercel URL in the API's `CORS_ORIGINS`.
 
 ## AI Safety & Limitations
 
-- OpenAI-compatible API calls run server-side. Never expose the provider key, Supabase secrets, or recovery secret in browser code or public configuration.
-- Authenticated routes and Supabase RLS limit access to the signed-in user's expense records. Cross-account RLS isolation has not been verified with separate live accounts.
+- The provider key lives only in the API's environment; the browser never sees it.
+- Expenses stay in the visitor's browser. Clearing site data removes them.
 - Numeric totals and chart data are calculated by application code, not generated by a language model.
-- AI categorisation can be overridden by the user; provider failures may use the explicitly labelled rule-based categorisation fallback.
-- AI Spending Insights is currently paused because live provider reliability has not been established. Do not present a fallback, placeholder, or unverified response as AI-generated.
+- AI categorisation can be overridden by the user; provider failures use the explicitly labelled keyword fallback.
 - AI output is advisory and may be imperfect. The application is not financial, tax, or investment advice.
-- Live email delivery, production deployment, and end-to-end recovery have not been certified by this README.

@@ -1,3 +1,5 @@
+> **Showcase fork:** this file describes the original Supabase + Vercel deployment. The AI Lodge showcase deploys differently; see "What is deployed" and "Deployment" in README.md.
+
 # Vercel deployment checklist
 
 Deployment has not been performed. Complete this checklist only after reviewing the settings and approving publication.
