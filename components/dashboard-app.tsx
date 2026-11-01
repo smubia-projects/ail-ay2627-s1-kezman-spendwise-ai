@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -10,8 +9,8 @@ import {
   CircleDollarSign,
   CreditCard,
   Filter,
-  LogOut,
   Pencil,
+  RotateCcw,
   Search,
   Sparkles,
   Trash2,
@@ -41,6 +40,9 @@ import {
   type Expense,
   type ExpenseCategory,
 } from "@/lib/expense-data";
+import { apiJson, isHandledApiError } from "@/lib/api";
+import { loadExpenses, newExpenseId, resetExpenses, saveExpenses } from "@/lib/expense-store";
+import { ApiNotices } from "@/components/rate-limit-cta";
 
 const formatChartCurrency = (value: number) =>
   new Intl.NumberFormat("en-SG", {
@@ -91,11 +93,9 @@ function getInitialForm(date?: string): ExpenseFormState {
 }
 
 export function DashboardApp() {
-  const router = useRouter();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
-  const [isSavingExpense, setIsSavingExpense] = useState(false);
   const [dataError, setDataError] = useState("");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -104,97 +104,68 @@ export function DashboardApp() {
   const [form, setForm] = useState<ExpenseFormState>(getInitialForm());
   const [suggestion, setSuggestion] = useState<SuggestionState | null>(null);
   const [isLoadingSuggestion, setIsLoadingSuggestion] = useState(false);
-  const lastSuggestionRef = useRef("");
-  const suggestionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suggestionForRef = useRef("");
 
+  // Expenses come from this browser's storage (seeded with fictional demo data on the first visit).
   useEffect(() => {
-    let active = true;
-    void fetch("/api/expenses")
-      .then(async (response) => {
-        if (response.status === 401) {
-          router.replace("/login");
-          return null;
-        }
-        const payload = (await response.json()) as { expenses?: Expense[]; message?: string };
-        if (!response.ok) {
-          throw new Error(payload.message ?? "Unable to load expenses.");
-        }
-        return payload.expenses ?? [];
-      })
-      .then((loaded) => {
-        if (!active || !loaded) return;
-        setExpenses(loaded);
-        setSelectedMonth(getDefaultMonth(loaded));
-      })
-      .catch((error: unknown) => {
-        if (active) setDataError(error instanceof Error ? error.message : "Unable to load expenses.");
-      })
-      .finally(() => {
-        if (active) setIsLoadingExpenses(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [router]);
-
-  useEffect(() => {
-    return () => {
-      if (suggestionTimerRef.current) {
-        clearTimeout(suggestionTimerRef.current);
-      }
-    };
+    const loaded = loadExpenses();
+    // localStorage is only readable after hydration (the pages are prerendered), so this runs in an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpenses(loaded);
+    setSelectedMonth(getDefaultMonth(loaded));
+    setIsLoadingExpenses(false);
   }, []);
 
+  const updateExpenses = (update: (current: Expense[]) => Expense[]) => {
+    setExpenses((current) => {
+      const next = update(current);
+      saveExpenses(next);
+      return next;
+    });
+  };
+
   const handleDescriptionChange = (value: string) => {
-    if (suggestionTimerRef.current) {
-      clearTimeout(suggestionTimerRef.current);
-    }
-
     setForm((current) => ({ ...current, description: value }));
-    const trimmed = value.trim();
-
-    if (!trimmed || trimmed.length < 3) {
+    if (value.trim() !== suggestionForRef.current) {
       setSuggestion(null);
-      lastSuggestionRef.current = "";
-      setIsLoadingSuggestion(false);
-      return;
     }
+  };
 
-    if (trimmed === lastSuggestionRef.current) {
-      return;
-    }
-
-    lastSuggestionRef.current = trimmed;
+  // The model is asked only when the visitor clicks "Suggest category", never while typing.
+  const requestSuggestion = async () => {
+    const trimmed = form.description.trim();
+    if (trimmed.length < 3 || isLoadingSuggestion) return;
+    suggestionForRef.current = trimmed;
     setIsLoadingSuggestion(true);
-    suggestionTimerRef.current = setTimeout(async () => {
-      try {
-        const response = await fetch("/api/ai/categorize", {
+    try {
+      const payload = await apiJson<SuggestionState>(
+        "/api/ai/categorize",
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ description: trimmed }),
-        });
-
-        if (!response.ok) {
-          throw new Error("Unable to fetch AI suggestion");
-        }
-
-        const payload = (await response.json()) as SuggestionState & { category: ExpenseCategory };
-        setSuggestion({
-          category: payload.category,
-          explanation: payload.explanation,
-          source: payload.source ?? "fallback",
-        });
-      } catch {
+        },
+        "Unable to fetch AI suggestion",
+      );
+      setSuggestion({
+        category: payload.category,
+        explanation: payload.explanation,
+        source: payload.source ?? "fallback",
+      });
+    } catch (error) {
+      // 429 (limit reached) and 503 (paused) are already shown in a modal; no substitute suggestion.
+      if (isHandledApiError(error)) {
+        setSuggestion(null);
+      } else {
         setSuggestion({
           category: "Other",
           explanation: "AI unavailable right now. You can still choose a category manually.",
           source: "fallback",
         });
-      } finally {
-        setIsLoadingSuggestion(false);
       }
-    }, 600);
+    } finally {
+      setIsLoadingSuggestion(false);
+    }
   };
 
   const dashboard = useMemo(() => {
@@ -228,45 +199,24 @@ export function DashboardApp() {
     }
 
     setDataError("");
-    setIsSavingExpense(true);
-    try {
-      const response = await fetch("/api/expenses", {
-        method: editingId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...(editingId ? { id: editingId } : {}),
-          description: form.description.trim(),
-          amountCents: toCents(Number(form.amount)),
-          category: form.category,
-          date: form.date,
-          notes: form.notes.trim(),
-        }),
-      });
-      const payload = (await response.json()) as { expense?: Expense; message?: string };
-      if (response.status === 401) {
-        router.replace("/login");
-        return;
-      }
-      if (!response.ok || !payload.expense) {
-        throw new Error(payload.message ?? "Unable to save this expense.");
-      }
-
-      const savedExpense = payload.expense;
-      setExpenses((current) => {
-        const next = editingId
-          ? current.map((expense) => (expense.id === editingId ? savedExpense : expense))
-          : [savedExpense, ...current];
-        return next;
-      });
-      setSelectedMonth(getMonthKey(savedExpense.date));
-      setForm(getInitialForm());
-      setSuggestion(null);
-      setEditingId(null);
-    } catch (error) {
-      setDataError(error instanceof Error ? error.message : "Unable to save this expense.");
-    } finally {
-      setIsSavingExpense(false);
-    }
+    const savedExpense: Expense = {
+      id: editingId ?? newExpenseId(),
+      description: form.description.trim().slice(0, 180),
+      amountCents: toCents(Number(form.amount)),
+      category: form.category,
+      date: form.date,
+      notes: form.notes.trim().slice(0, 1000),
+      createdAt: new Date().toISOString(),
+    };
+    updateExpenses((current) =>
+      editingId
+        ? current.map((expense) => (expense.id === editingId ? { ...savedExpense, createdAt: expense.createdAt } : expense))
+        : [savedExpense, ...current],
+    );
+    setSelectedMonth(getMonthKey(savedExpense.date));
+    setForm(getInitialForm());
+    setSuggestion(null);
+    setEditingId(null);
   };
 
   const startEdit = (expense: Expense) => {
@@ -281,30 +231,13 @@ export function DashboardApp() {
     setShowForm(true);
   };
 
-  const removeExpense = async (id: string) => {
+  const removeExpense = (id: string) => {
     if (!window.confirm("Delete this expense? This cannot be undone.")) return;
     setDataError("");
-    try {
-      const response = await fetch("/api/expenses", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const payload = (await response.json()) as { message?: string };
-      if (response.status === 401) {
-        router.replace("/login");
-        return;
-      }
-      if (!response.ok) {
-        throw new Error(payload.message ?? "Unable to delete this expense.");
-      }
-      setExpenses((current) => current.filter((expense) => expense.id !== id));
-      if (editingId === id) {
-        setEditingId(null);
-        setForm(getInitialForm());
-      }
-    } catch (error) {
-      setDataError(error instanceof Error ? error.message : "Unable to delete this expense.");
+    updateExpenses((current) => current.filter((expense) => expense.id !== id));
+    if (editingId === id) {
+      setEditingId(null);
+      setForm(getInitialForm());
     }
   };
 
@@ -323,21 +256,23 @@ export function DashboardApp() {
           </div>
           <nav className="hidden items-center gap-5 text-sm font-medium text-slate-600 md:flex">
             <Link href="/dashboard" className="text-emerald-700">Dashboard</Link>
+            <Link href="/insights">AI Insights</Link>
           </nav>
           <button
             type="button"
-            onClick={async () => {
-              const response = await fetch("/api/auth/logout", { method: "POST" });
-              if (!response.ok) {
-                setDataError("Unable to sign out. Please try again.");
-                return;
-              }
-              router.push("/login");
+            onClick={() => {
+              if (!window.confirm("Replace your expenses with the fictional demo data?")) return;
+              const seeded = resetExpenses();
+              setExpenses(seeded);
+              setSelectedMonth(getDefaultMonth(seeded));
+              setEditingId(null);
+              setForm(getInitialForm());
+              setSuggestion(null);
             }}
             className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
           >
-            <LogOut size={16} />
-            Logout
+            <RotateCcw size={16} />
+            Reset demo data
           </button>
         </div>
       </header>
@@ -450,28 +385,42 @@ export function DashboardApp() {
                   />
                 </div>
 
-                {form.description.trim().length > 0 && (
+                {form.description.trim().length >= 3 && (
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <Sparkles size={16} />
-                      {suggestion?.source === "ai" ? "AI suggested category" : "AI unavailable — fallback category"}
-                    </div>
-                    <p className="mt-2 leading-relaxed text-emerald-700">
-                      {isLoadingSuggestion ? "Checking your description…" : suggestion?.explanation ?? "No suggestion yet."}
-                    </p>
-                    {suggestion && (
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-emerald-700">
-                          {suggestion.category}
-                        </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <Sparkles size={16} />
+                        {suggestion
+                          ? suggestion.source === "ai" ? "AI suggested category" : "AI unavailable — keyword match, not AI"
+                          : "AI category suggestion"}
+                      </div>
+                      {!suggestion && (
                         <button
                           type="button"
-                          onClick={() => setForm((current) => ({ ...current, category: suggestion.category }))}
-                          className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                          onClick={requestSuggestion}
+                          disabled={isLoadingSuggestion}
+                          className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
-                          Accept suggestion
+                          {isLoadingSuggestion ? "Checking…" : "Suggest category"}
                         </button>
-                      </div>
+                      )}
+                    </div>
+                    {suggestion && (
+                      <>
+                        <p className="mt-2 leading-relaxed text-emerald-700">{suggestion.explanation}</p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-emerald-700">
+                            {suggestion.category}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setForm((current) => ({ ...current, category: suggestion.category }))}
+                            className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                          >
+                            Accept suggestion
+                          </button>
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
@@ -490,8 +439,8 @@ export function DashboardApp() {
                       Cancel
                     </button>
                   )}
-                  <button type="submit" disabled={isSavingExpense} className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">
-                    {isSavingExpense ? "Saving…" : editingId ? "Save changes" : "Add expense"}
+                  <button type="submit" className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+                    {editingId ? "Save changes" : "Add expense"}
                     <ArrowRight size={16} />
                   </button>
                 </div>
@@ -636,6 +585,7 @@ export function DashboardApp() {
           </div>
         </section>
       </main>
+      <ApiNotices />
     </div>
   );
 }
