@@ -34,7 +34,7 @@ Left out of the showcase, but kept in this fork: the Supabase email/password acc
 
 ## AI Integration
 
-Both AI steps call an OpenAI-compatible chat completions endpoint from the API, configured by env: `API_BASE_URL` (default `https://api.apiyi.com/v1`), `API_KEY` and `MODEL_NAME` (default `gemini-3.5-flash-lite`). The original `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL` names are still read as fallbacks.
+Both AI steps call an OpenAI-compatible chat completions endpoint from the API, configured by env: `API_BASE_URL` (default `https://api.apiyi.com/v1`), `API_KEY` and `MODEL_NAME` (default `deepseek-v4-flash`). The original `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL` names are still read as fallbacks.
 
 - **Categorisation** output is validated against the approved categories. If the provider fails or answers badly, the app returns a keyword match labelled "not AI"; it is never shown as AI output.
 - **Insights** never compute figures: the API sums the month in code (`lib/insights.ts`), the model only interprets that summary, and its text is rejected if it states an amount, currency, percentage, decimal or date (`lib/ai.ts`). A rejected answer gets one corrective retry; if that also fails the API answers 502 and nothing is shown.
