@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { AlertTriangle, CalendarRange, LogOut, Sparkles } from "lucide-react";
+import { AlertTriangle, CalendarRange, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   calculateDashboard,
   formatMonthLabel,
   formatSGD,
   getDefaultMonth,
+  getMonthExpenses,
   getMonthOptions,
   type Expense,
 } from "@/lib/expense-data";
+import { apiJson, isHandledApiError } from "@/lib/api";
+import { loadExpenses } from "@/lib/expense-store";
+import { ApiNotices } from "@/components/rate-limit-cta";
 
 type InsightResult = {
   overview: string;
@@ -21,10 +24,7 @@ type InsightResult = {
   source: "ai";
 };
 
-const INSIGHTS_AVAILABLE = false;
-
 export function InsightsPanel() {
-  const router = useRouter();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [analysis, setAnalysis] = useState<InsightResult | null>(null);
@@ -32,34 +32,15 @@ export function InsightsPanel() {
   const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
   const [error, setError] = useState("");
 
+  // Same browser-stored expenses as the dashboard.
   useEffect(() => {
-    let active = true;
-    void fetch("/api/expenses")
-      .then(async (response) => {
-        if (response.status === 401) {
-          router.replace("/login");
-          return null;
-        }
-        const payload = (await response.json()) as { expenses?: Expense[]; message?: string };
-        if (!response.ok) throw new Error(payload.message ?? "Unable to load expenses.");
-        return payload.expenses ?? [];
-      })
-      .then((loaded) => {
-        if (!active || !loaded) return;
-        setExpenses(loaded);
-        setSelectedMonth(getDefaultMonth(loaded));
-      })
-      .catch((loadError: unknown) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load expenses.");
-      })
-      .finally(() => {
-        if (active) setIsLoadingExpenses(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [router]);
+    const loaded = loadExpenses();
+    // localStorage is only readable after hydration (the pages are prerendered), so this runs in an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpenses(loaded);
+    setSelectedMonth(getDefaultMonth(loaded));
+    setIsLoadingExpenses(false);
+  }, []);
 
   const monthOptions = useMemo(() => getMonthOptions(expenses), [expenses]);
 
@@ -79,20 +60,21 @@ export function InsightsPanel() {
     setError("");
 
     try {
-      const response = await fetch("/api/ai/insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: selectedMonth }),
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json()) as { message?: string };
-        throw new Error(payload.message ?? "AI insight analysis failed.");
-      }
-
-      const payload = (await response.json()) as InsightResult;
+      // Only amounts and categories leave the browser; descriptions and notes stay local.
+      const monthExpenses = getMonthExpenses(expenses, selectedMonth).map(({ amountCents, category }) => ({ amountCents, category }));
+      const payload = await apiJson<InsightResult>(
+        "/api/ai/insights",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ month: selectedMonth, expenses: monthExpenses }),
+        },
+        "AI insight analysis failed.",
+      );
       setAnalysis(payload);
     } catch (err) {
+      // 429 / 503 are shown in a modal; nothing replaces the AI answer.
+      if (isHandledApiError(err)) return;
       setError(err instanceof Error ? err.message : "AI analysis is not available right now.");
     } finally {
       setIsLoading(false);
@@ -115,21 +97,12 @@ export function InsightsPanel() {
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/insights" className="text-emerald-700">AI Insights</Link>
           </nav>
-          <button
-            type="button"
-            onClick={async () => {
-              const response = await fetch("/api/auth/logout", { method: "POST" });
-              if (!response.ok) {
-                setError("Unable to sign out. Please try again.");
-                return;
-              }
-              router.push("/login");
-            }}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 md:hidden"
           >
-            <LogOut size={16} />
-            Logout
-          </button>
+            Dashboard
+          </Link>
         </div>
       </header>
 
@@ -155,17 +128,13 @@ export function InsightsPanel() {
               </div>
               <button
                 type="button"
-              onClick={handleAnalyze}
-              disabled={!INSIGHTS_AVAILABLE || isLoading || isLoadingExpenses || !selectedMonth || expenses.length === 0}
-              className="inline-flex items-center gap-2 rounded-full bg-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-600"
+                onClick={handleAnalyze}
+                disabled={isLoading || isLoadingExpenses || !selectedMonth || expenses.length === 0}
+                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
               >
-              {INSIGHTS_AVAILABLE ? (isLoading ? "Analysing…" : "Analyse My Spending") : "AI insights temporarily unavailable"}
+                {isLoading ? "Analysing…" : "Analyse My Spending"}
               </button>
             </div>
-          </div>
-
-          <div role="status" className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            AI spending insights are paused while provider reliability is verified. Monthly totals below are calculated from your expenses; no generated recommendations are being shown.
           </div>
 
           <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-800">
@@ -251,6 +220,7 @@ export function InsightsPanel() {
           </div>
         )}
       </main>
+      <ApiNotices />
     </div>
   );
 }

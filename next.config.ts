@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Frontend only: the API lives in server/ (Cloud Run) and is reached via NEXT_PUBLIC_API_BASE.
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
