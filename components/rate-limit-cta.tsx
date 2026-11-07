@@ -16,7 +16,7 @@ export const PROJECT_CTA = {
   accentColor: '#10b981',
   headline: "Your spending, sorted!",
   description:
-    'This demo made {count} AI requests for you, sorting expenses and reading your month. Want to build AI tools for everyday money habits? Join us and build projects like this.',
+    'Want to build AI that makes everyday money habits easier to see and change? Come build at AI Lodge: real teammates, real deployments and your name on a project in the showcase.',
   programme: 'AI Lodge',
   programmeLink: 'https://www.smubia.com/ailodge',
   githubLink: 'https://github.com/smubia-projects/ail-ay2627-s1-kezman-spendwise-ai',
