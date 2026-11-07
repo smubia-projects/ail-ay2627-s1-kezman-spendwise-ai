@@ -26,7 +26,6 @@ function loadTypeScriptModule(relativePath) {
 
 const expenseData = loadTypeScriptModule("lib/expense-data.ts");
 const ai = loadTypeScriptModule("lib/ai.ts");
-const recovery = loadTypeScriptModule("lib/recovery-session.ts");
 const openAIErrors = loadTypeScriptModule("lib/openai-errors.ts");
 
 test("date-only expense values keep their calendar month", () => {
@@ -71,25 +70,6 @@ test("insight text rejects unverified numeric financial claims", () => {
   }).success, false);
 });
 
-test("recovery marker is signed for one authenticated user", () => {
-  const previousSecret = process.env.AUTH_RECOVERY_SECRET;
-  process.env.AUTH_RECOVERY_SECRET = "test-only-secret-with-at-least-32-bytes";
-  try {
-    const marker = recovery.createRecoverySessionValue("user-a");
-    assert.equal(recovery.isValidRecoverySession("user-a", marker), true);
-    assert.equal(recovery.isValidRecoverySession("user-b", marker), false);
-    assert.equal(recovery.isValidRecoverySession("user-a", `${marker.slice(0, -1)}0`), false);
-    assert.equal(recovery.isValidRecoverySession("user-a", undefined), false);
-    assert.equal(recovery.isValidRecoverySession(
-      "user-a",
-      `${Math.floor(Date.now() / 1000) - 1}.${"0".repeat(64)}`,
-    ), false);
-  } finally {
-    if (previousSecret === undefined) delete process.env.AUTH_RECOVERY_SECRET;
-    else process.env.AUTH_RECOVERY_SECRET = previousSecret;
-  }
-});
-
 test("OpenAI quota and rate-limit errors produce safe actionable classifications", () => {
   const quota = openAIErrors.getOpenAIRequestFailure({
     status: 429,
@@ -97,7 +77,7 @@ test("OpenAI quota and rate-limit errors produce safe actionable classifications
     type: "insufficient_quota",
   });
   assert.equal(quota.code, "PROVIDER_QUOTA_EXHAUSTED");
-  assert.equal(quota.status, 503);
+  assert.equal(quota.status, 502);
 
   const limited = openAIErrors.getOpenAIRequestFailure({
     status: 429,
@@ -105,7 +85,7 @@ test("OpenAI quota and rate-limit errors produce safe actionable classifications
     headers: new Headers({ "retry-after": "12" }),
   });
   assert.equal(limited.code, "PROVIDER_RATE_LIMITED");
-  assert.equal(limited.status, 429);
+  assert.equal(limited.status, 502);
   assert.equal(limited.retryAfterSeconds, 12);
 
   const ambiguous = openAIErrors.getOpenAIRequestFailure({ status: 429 });

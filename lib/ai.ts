@@ -50,12 +50,21 @@ const SpendingInsightContentSchema = z.object({
     .max(3),
 });
 
+// Financial figures are calculated in code, so the model must not state its own: no currency symbols or
+// codes, percentages, decimals or grouped thousands. A bare small number ("your top two categories",
+// "about 3 coffees") is not a financial claim, and rejecting every digit made most real model answers fail.
+const UNVERIFIED_FIGURE = /[$€£¥]|\b(?:SGD|S\$|USD|dollars?|cents?)\b|\d\s*%|percent|\d[.,]\d|\d{4,}/i;
+
+export function containsUnverifiedFigure(text: string) {
+  return UNVERIFIED_FIGURE.test(text);
+}
+
 export const SpendingInsightSchema = SpendingInsightContentSchema.refine(
   (insight) =>
     [insight.overview, ...insight.patterns, ...insight.savings, ...insight.recommendations]
     .every((item) => {
       const text = typeof item === "string" ? item : `${item.title} ${item.detail}`;
-      return !/[0-9$€£¥%]/.test(text);
+      return !containsUnverifiedFigure(text);
     }),
   { message: "Insight text must not contain unverified numeric financial claims." },
 );
