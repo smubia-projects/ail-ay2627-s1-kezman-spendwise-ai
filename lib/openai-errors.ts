@@ -38,10 +38,12 @@ export function getOpenAIRequestFailure(error: unknown): OpenAIRequestFailure {
       ? Math.min(Math.ceil(parsedRetryAfter), 86_400)
       : undefined;
 
+  // Provider-side 429s are reported as 502: on the club deployment 429 means the visitor reached the
+  // demo's own rate limit (the CTA) and 503 means the demo was paused, so neither may stand for a provider error.
   if (status === 429) {
     if (providerCode === "insufficient_quota" || providerCode === "billing_hard_limit_reached") {
       return {
-        status: 503,
+        status: 502,
         code: "PROVIDER_QUOTA_EXHAUSTED",
         message: "The AI provider reports that this account has no available quota or credits. Check provider balance and spending limits.",
         providerCode,
@@ -51,7 +53,7 @@ export function getOpenAIRequestFailure(error: unknown): OpenAIRequestFailure {
     }
 
     return {
-      status: 429,
+      status: 502,
       code: providerCode === "rate_limit_exceeded" ? "PROVIDER_RATE_LIMITED" : "PROVIDER_429_UNCLASSIFIED",
       message: retryAfterSeconds
         ? `The AI provider is limiting requests. Try again in about ${retryAfterSeconds} seconds.`
