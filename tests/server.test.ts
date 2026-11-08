@@ -86,3 +86,17 @@ test("passLimit lets a request through, or stops it when the engine has answered
   assert.equal(await passLimit(async () => { answered = 429; }, req, res), false);
   assert.equal(answered, 429);
 });
+
+test("insight sections sent as strings or string lists are turned into title/detail items", async () => {
+  const { checkInsight } = await import("../lib/insights");
+  const reply = JSON.stringify({
+    overview: "Food & Dining is your largest category this month, with Transport next.",
+    patterns: "Food & Dining takes the largest share. Transport is smaller.",
+    savings: ["Pack lunch on a few weekdays.", "Walk short trips instead of taking a ride."],
+    recommendations: [{ title: "Set a weekly food budget", detail: "Pick a weekly cap for eating out and check it on Sundays." }],
+  });
+  const { insight, problem } = checkInsight(reply);
+  assert.equal(problem, "");
+  assert.equal(insight?.patterns[0]?.title, "Food & Dining takes the largest share");
+  assert.equal(insight?.savings.length, 2);
+});
