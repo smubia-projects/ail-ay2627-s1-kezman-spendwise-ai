@@ -39,6 +39,8 @@ export async function categorizeHandler(req: Request, res: Response) {
       model: openAI.model,
       temperature: 0,
       max_tokens: 120,
+      // No thinking pass: it would eat the 120-token budget and the visitor's wait (DeepSeek-only flag).
+      ...(openAI.model.includes("deepseek") ? { reasoning_effort: "none" as never } : {}),
       messages: [
         {
           role: "system",
