@@ -3,7 +3,7 @@ import OpenAI from "openai";
 // Inference config comes from env so the gateway and model can change without code edits.
 // The new names (API_BASE_URL, API_KEY, MODEL_NAME) win; the original OPENAI_* names still work.
 const DEFAULT_BASE_URL = "https://api.apiyi.com/v1";
-const DEFAULT_MODEL = "deepseek-v4-flash";
+const DEFAULT_MODEL = "deepseek-v4-1-flash-260910";
 
 export function getOpenAIConfiguration() {
   const apiKey = (process.env.API_KEY || process.env.OPENAI_API_KEY)?.trim();
